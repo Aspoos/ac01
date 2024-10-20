@@ -2,66 +2,80 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <WiFi.h>
-#include <iostream>
+#include <HTTPClient.h>
 
-#define WIFI_NETWORK "--- your WiFi network name ---"
-#define WIFI_PASSWORD "--- your WiFi password ---"
-
-const long WIFI_TIMEOUT_MS = 10000; // 20 second WiFi connection timeout
-const long WIFI_RECOVER_TIME_MS = 10000; // Wait 30 seconds after a failed connection attempt
+const int LED_WIFI_OFF = 2;
+const long WIFI_TIMEOUT_MS = 2000;
+const long WIFI_RECOVER_TIME_MS = 2000;
 
 // instances tasks
 TaskHandle_t th_wf = NULL;
+TaskHandle_t rl_wf = NULL;
 
 void xTaskKeepWiFiAlive(void *p);
+void xTaskRule(void *p);
 
 void setup() {
-    
-    pinMode(13, OUTPUT);
+    Serial.begin(115200);
 
-    xTaskCreate(
-      xTaskKeepWiFiAlive,
-      "wifi_Debug",
-      (configMINIMAL_STACK_SIZE * 5),
-      NULL,
-      1,
-      &th_wf
-    );
-
+    pinMode(2, OUTPUT);
+    pinMode(15, OUTPUT);
+  
+    xTaskCreate(xTaskKeepWiFiAlive,"wifi_Debug",(configMINIMAL_STACK_SIZE * 3), NULL, 2, &th_wf);
+    xTaskCreate(xTaskRule,         "rule_Debug",(configMINIMAL_STACK_SIZE * 5) ,NULL, 1, &rl_wf);
 }
 
-void loop() {
-  // put your main code here, to run repeatedly:
-}
+void loop() { }
 
-// Implementations
-void xTaskKeepWiFiAlive(void *p) {
-   for(;;) {
+void xTaskRule(void *p) {
+  while(1)  {
+    digitalWrite(15, HIGH);
+    vTaskDelay(3000 / portTICK_PERIOD_MS);  
      
-     if (WiFi.status() == WL_CONNECTED)
-     {
-        digitalWrite(13, LOW);
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+     if(WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;   
+        http.begin("http://192.168.43.119:3000/");  
+        http.addHeader("Content-Type", "text/plain"); 
+        
+        int httpResponseCode = http.GET();   
+        
+        if(httpResponseCode > 199 && httpResponseCode < 300){
+          digitalWrite(15, LOW);
+          String response = http.getString();   
+          Serial.println(httpResponseCode); 
+          Serial.println(response);
+        }else{
+          Serial.print("Error on sending POST: ");
+          Serial.println(httpResponseCode);
+        }
+        http.end();
+        vTaskDelay(3000 / portTICK_PERIOD_MS); 
+      } else {
+        Serial.println("Error in WiFi connection");  
+      }
+   }
+}
+
+void xTaskKeepWiFiAlive(void *p) {
+   while(1) {
+     
+     if (WiFi.status() == WL_CONNECTED) {
+        digitalWrite(LED_WIFI_OFF, HIGH);
         continue;
      }
      
-     Serial.println("[WIFI] Connecting");
      WiFi.mode(WIFI_STA);
-     WiFi.begin(WIFI_NETWORK, WIFI_PASSWORD);
+     WiFi.disconnect();
+     WiFi.begin("CLL2", "qwe123456");
      
      unsigned long startAttemptTime = millis();
 
-     while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_TIMEOUT_MS){}
-     
-     if(WiFi.status() != WL_CONNECTED){
-        Serial.println("[WIFI] FAILED");
+     while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_TIMEOUT_MS){
+       digitalWrite(LED_WIFI_OFF, LOW);
+     }
 
-        digitalWrite(13, HIGH);
-        vTaskDelay(WIFI_RECOVER_TIME_MS / portTICK_PERIOD_MS);
-			  continue;
+     if(WiFi.status() != WL_CONNECTED) {        
+	continue;
       }
-
-      Serial.println("[WIFI] Connected: " + WiFi.localIP());
-      digitalWrite(13, LOW);
    }
 }
